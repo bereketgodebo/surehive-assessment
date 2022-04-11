@@ -254,3 +254,32 @@ type AuctionSchema =
     .\/ Endpoint "close" CloseParams
 
 -------------------- ADTs end ----------------------------------
+
+---------------------- bid start logic -----------------------------
+start :: AsContractError e => StartParams -> Contract w s e ()
+start StartParams{..} = do
+    pkh <- ownPaymentPubKeyHash 
+    let a = Auction
+            { aSeller   = pkh 
+            , aDeadline = spDeadline
+            , aMinBid   = spMinBid
+            , aCurrency = spCurrency
+            , aToken    = spToken
+            }
+        d = AuctionDatum 
+        -- utxo used to start auction; contains an NFT (within the Auction type) and no bider
+            { adAuction    = a 
+            , adHighestBid = Nothing 
+            }
+        -- creates of type Value to contain tokens; from the provided CurrencySymbol and TokenName as input
+        -- together with a minmum amount of Ada.
+        v = Value.singleton spCurrency spToken 1 <> Ada.lovelaceValueOf minLovelace
+        tx = Constraints.mustPayToTheScript d v 
+    ledgerTx <- submitTxConstraints typedAuctionValidator tx
+    void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
+    logInfo @P.String $ printf "started auction %s for token %s" (P.show a) (P.show v)
+
+------ start logic end --------------------
+
+
+    
