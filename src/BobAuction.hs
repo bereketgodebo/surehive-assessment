@@ -1,7 +1,8 @@
 {-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE NoImplicitPrelude          #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -315,8 +316,36 @@ bid BidParams{..} = do
         (P.show bpToken)
 ---------------------------- start logic ends ------------------------------------
 
+---------------------------- close logic starts -----------------------------------
+close :: forall w s. CloseParams -> Contract w s Text ()
+close CloseParams{..} = do
+    (oref, o, d@AuctionDatum{..}) <- findAuction cpCurrency cpToken
+    logInfo @P.String $ printf "found auction utxo with datum %s" (P.show d)
 
----------------------------- 
+    let t      = Value.singleton cpCurrency cpToken 1
+        r      = Redeemer $ PlutusTx.toBuiltinData Close
+        seller = aSeller adAuction
+
+        lookups = Constraints.typedValidatorLookups typedAuctionValidator P.<>
+                  Constraints.otherScript auctionValidator                P.<>
+                  Constraints.unspentOutputs (Map.singleton oref o)
+        tx      = case adHighestBid of
+                    Nothing      -> Constraints.mustPayToPubKey seller (t <> Ada.lovelaceValueOf minLovelace)  <>
+                                    Constraints.mustValidateIn (from $ aDeadline adAuction)                    <>
+                                    Constraints.mustSpendScriptOutput oref r
+                    Just Bid{..} -> Constraints.mustPayToPubKey bBidder (t <> Ada.lovelaceValueOf minLovelace) <>
+                                    Constraints.mustPayToPubKey seller (Ada.lovelaceValueOf bBid)              <>
+                                    Constraints.mustValidateIn (from $ aDeadline adAuction)                    <>
+                                    Constraints.mustSpendScriptOutput oref r
+    ledgerTx <- submitTxConstraintsWith lookups tx
+    void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
+    logInfo @P.String $ printf "closed auction %s for token (%s, %s)"
+        (P.show adAuction)
+        (P.show cpCurrency)
+        (P.show cpToken)
+---------------------------- close logic end ------------------------------------------
+
+---------------------------- helper functions -----------------------------------------
 
 findAuction :: CurrencySymbol 
             -> TokenName 
@@ -337,4 +366,19 @@ findAuction cs tn = do
                     | otherwise                                           -> throwError "auction token missmatch" 
         _           -> throwError "auction utxo not found" 
         
+endpoints :: Contract () AuctionSchema Text ()
+endpoints = awaitPromise (start' `select` bid' `select` close') >> endpoints 
+    where 
+        start' = endpoint @"start" start 
+        bid'   = endpoint @"bid"   bid
+        close' = endpoint @"close" close 
+
+mkSchemaDefinitions ''AuctionSchema
+
+myToken :: KnownCurrency 
+myToken = KnownCurrency (ValidatorHash "f") "Token" (TokenName "T" :| [])
+
+mkKnownCurrencies ['myToken]
+
+
 --------------------------
