@@ -12,10 +12,18 @@
 {-# LANGUAGE TypeOperators              #-}
 
 module BobAuction 
-     (
-
+     ( Auction (..)
+     , StartParams (..), BidParams (..), CloseParams (..)
+     , AuctionSchema
+     , start, bid, close
+     , endpoints
+     , schemas
+     , ensureKnownCurrencies
+     , printJson
+     , printSchemas
+     , registeredKnownCurrencies
+     , stage
      ) where
-
 
 import           Control.Monad        hiding (fmap)
 import           Data.Aeson           (ToJSON, FromJSON)
@@ -38,7 +46,7 @@ import qualified Prelude              as P
 import           Schema               (ToSchema)
 import           Text.Printf          (printf)
 
--- an NFT must contain a minimum amount ada
+-- all utxos must contain a minimum amount of Ada
 minLovelace :: Integer
 minLovelace = 2000000
 
