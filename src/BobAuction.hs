@@ -279,7 +279,62 @@ start StartParams{..} = do
     void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
     logInfo @P.String $ printf "started auction %s for token %s" (P.show a) (P.show v)
 
------- start logic end --------------------
+---------------------------- start logic end --------------------
+
+---------------------------- bid logic start ---------------------------
+bid :: forall w s. BidParams -> Contract w s Text ()
+bid BidParams{..} = do 
+    (oref, o, d@AuctionDatum{..}) <- findAuction bpCurrency bpToken
+    logInfo @P.String $ printf "found auction utxo with datum %s" (P.show d)
+
+    when (bpBid < minBid d) $ 
+        throwError $ pack $ printf "bid lower than minimal bid %d" (minBid d)
+    pkh <- ownPaymentPubKeyHash 
+    let b  = Bid {bBidder = pkh, bBid = bpBid}
+        d' = d {adHighestBid = Just b}
+        v  = Value.singleton bpCurrency bpToken 1 <> Ada.lovelaceValueOf (minLovelace + bpBid)
+        r = Redeemer $ PlutusTx.toBuiltinData $ MkBid b 
+
+        lookups = Constraints.typedValidatorLookups typedAuctionValidator P.<>
+                  Constraints.otherScript auctionValidator                P.<>
+                  Constraints.unspentOutputs (Map.singleton oref o)
+        tx      = case adHighestBid of 
+                      Nothing       -> Constraints.mustPayToTheScript d' v                            <>
+                                       Constraints.mustValidateIn (to $ aDeadline adAuction)          <> 
+                                       Constraints.mustSpendScriptOutput oref r 
+                      Just Bid{..}  -> Constraints.mustPayToTheScript d' v                            <>
+                                       Constraints.mustPayToPubKey bBidder (Ada.lovelaceValueOf bBid) <>
+                                       Constraints.mustValidateIn (to $ aDeadline adAuction)          <>
+                                       Constraints.mustSpendScriptOutput oref r 
+    ledgerTx <- submitTxConstraintsWith lookups tx 
+    void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
+    logInfo @P.String $ printf "made bid of %d lovelace in auction %s for token (%s, %s)"
+        bpBid 
+        (P.show adAuction)
+        (P.show bpCurrency)
+        (P.show bpToken)
+---------------------------- start logic ends ------------------------------------
 
 
-    
+---------------------------- 
+
+findAuction :: CurrencySymbol 
+            -> TokenName 
+            -> Contract w s Text (TxOutRef, ChainIndexTxOut, AuctionDatum)
+findAuction cs tn = do 
+    utxos <- utxosAt $ scriptHashAddress auctionHash
+    let xs = [ (oref, o)
+             | (oref, o) <- Map.toList utxos 
+             , Value.valueOf (_ciTxOutValue o) cs tn == 1
+             ]
+    case xs of 
+        [(oref, o)] -> case _ciTxOutDatum o of
+            Left _          -> throwError "datum missing"
+            Right (Datum e) -> case PlutusTx.fromBuiltinData e of 
+                Nothing    -> throwError "datum has wrong type"
+                Just d@AuctionDatum{..}
+                    | aCurrency adAuction == cs && aToken adAuction == tn -> return (oref, o, d)
+                    | otherwise                                           -> throwError "auction token missmatch" 
+        _           -> throwError "auction utxo not found" 
+        
+--------------------------
