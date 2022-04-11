@@ -8,6 +8,7 @@
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
 
 module BobAuction 
      (
@@ -225,3 +226,31 @@ auctionHash = Scripts.validatorHash typedAuctionValidator
 
 auctionAddress :: Ledger.Address 
 auctionAddress = scriptHashAddress auctionHash 
+
+---------------------- off chain code begins ---------------------------
+
+----------------------ADTs start
+data StartParams = StartParams 
+    { spDeadline :: !POSIXTime 
+    , spMinBid   :: !Integer 
+    , spCurrency :: !CurrencySymbol
+    , spToken    :: !TokenName 
+    } deriving (Generic, ToJSON, FromJSON, ToSchema)
+
+data BidParams = BidParams 
+    { bpCurrency :: !CurrencySymbol
+    , bpToken    :: !TokenName 
+    , bpBid      :: !Integer 
+    } deriving (Generic, ToJSON, FromJSON, ToSchema)
+
+data CloseParams = CloseParams 
+    { cpCurrency :: !CurrencySymbol
+    , cpToken    :: !TokenName 
+    } deriving (Generic, ToJSON, FromJSON, ToSchema)
+
+type AuctionSchema =
+        Endpoint "start" StartParams
+    .\/ Endpoint "bid"   BidParams
+    .\/ Endpoint "close" CloseParams
+
+-------------------- ADTs end ----------------------------------
